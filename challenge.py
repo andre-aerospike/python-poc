@@ -87,12 +87,24 @@ def cmd_load(client):
 		add_customer(client, c.name, c.seed)
 
 
+def modify_customer(client, name):
+	print '  Modify record %s' % name
+	ctx = [ cdt_ctx.cdt_ctx_map_key('v') ]	# We only want to consider the contents of map value 'v'
+
+
 def cmd_modify(client):
-	print 'modify!'
+	print 'Modify records'
+	modify_customer(client, customers[0].name)
+
+
+def expire_customer(client, name):
+	print '  Expire record %s' % name
+	ctx = [ cdt_ctx.cdt_ctx_map_key('v') ]	# We only want to consider the contents of map value 'v'
 
 
 def cmd_expire(client):
-	print 'expire!'
+	print 'Expire records'
+	expire_customer(client, customers[-1].name)
 
 
 def cmd_info(client):
@@ -112,10 +124,10 @@ def cmd_info(client):
 			average = float(total) / float(size2)
 		print('  Naive iteration: %d records average %f' % (size2, average))
 
-		# Use predicates to get average
-		ctx = [ cdt_ctx.cdt_ctx_map_key('v') ]	# We only want to consider the contents of map value 'v'
-		query = client.query('ns1', 'set1')
-		query.select('tx')
+		# Can we use predicates to get average???
+		#ctx = [ cdt_ctx.cdt_ctx_map_key('v') ]	# We only want to consider the contents of map value 'v'
+		#query = client.query('ns1', 'set1')
+		#query.select('tx')
 
 
 def main():
