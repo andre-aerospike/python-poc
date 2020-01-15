@@ -46,6 +46,7 @@ def cmd_drop(client):
 
 
 def clear_customer(client, name):
+	print '  Clear record %s', name
 	ops = [
 		map_operations.map_clear('tx')
 	]
@@ -64,6 +65,7 @@ def cmd_clear(client):
 
 def add_customer(client, name, seed):
 	iterations = 1000
+	print '  Add %d transactions for record %s' % (iterations, name)
 	ops = []
 
 	random.seed(seed)
@@ -76,7 +78,7 @@ def add_customer(client, name, seed):
 		ops.append( map_operations.map_put('tx', tid, {'t':timestr, 'v':value} ) )
 
 	result = client.operate(getkey(name), ops, meta={'ttl': aerospike.TTL_NEVER_EXPIRE} )
-	print(result)
+	print '  %s' % str(result)
 
 
 def cmd_load(client):
@@ -97,7 +99,7 @@ def cmd_info(client):
 	print 'Show info'
 	for c in customers:
 		size = client.map_size(getkey(c.name), 'tx')
-		print('---- Customer:%s  transactions:%d ----' % (c.name, size))
+		print('  ---- Customer:%s  transactions:%d ----' % (c.name, size))
 
 		# Naive iteration through map
 		total = 0
@@ -108,7 +110,7 @@ def cmd_info(client):
 		average = 0
 		if size2 > 0:
 			average = float(total) / float(size2)
-		print('   Naive iteration: %d records average %f' % (size2, average))
+		print('  Naive iteration: %d records average %f' % (size2, average))
 
 		# Use predicates to get average
 		ctx = [ cdt_ctx.cdt_ctx_map_key('v') ]	# We only want to consider the contents of map value 'v'
