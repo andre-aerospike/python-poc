@@ -28,9 +28,9 @@ epoch = datetime.utcfromtimestamp(0)
 
 Customer = collections.namedtuple('Customer', ['name', 'seed'])
 customers = [
-	#Customer('customer1', 123),
-	#Customer('customer2', 123),
-	#Customer('customer3', 234),
+	Customer('customer1', 123),
+	Customer('customer2', 123),
+	Customer('customer3', 234),
 	Customer('customer4', 124),
 ]
 
@@ -46,9 +46,10 @@ def cmd_drop(client):
 	for c in customers:
 		try:
 			client.remove(getkey(c.name))
+			print '  Removed %s' % (c.name)
 		except aerospike.exception.RecordNotFound as e:
 			# Ignore if record isn't there
-			pass
+			print '  Record %s not found (%s)' % (c.name, e)
 
 
 def clear_customer(client, name):
@@ -64,9 +65,10 @@ def cmd_clear(client):
 	for c in customers:
 		try:
 			clear_customer(client, c.name)
+			print '  Cleared %s' % (c.name)
 		except aerospike.exception.RecordNotFound as e:
 			# Ignore if record isn't there
-			pass
+			print '  Record %s not found (%s)' % (c.name, e)
 
 
 def add_customer(client, name, seed):
@@ -88,7 +90,7 @@ def add_customer(client, name, seed):
 		if DEBUG_FLAT:
 			ops.append( map_operations.map_put('tx', tid, timesec ) )
 		else:
-			ops.append( map_operations.map_put('tx', tid, {'t':timestr, 'ts':timesec, 'v':value} ) )
+			ops.append( map_operations.map_put('tx', tid, [ timesec, value, timestr ] ) )
 
 	meta = {'ttl': aerospike.TTL_NEVER_EXPIRE}
 	result = client.operate(getkey(name), ops, meta=meta)
@@ -112,46 +114,15 @@ def cmd_modify(client):
 	modify_customer(client, customers[0].name)
 
 
-def xxx_expire_customer(client, name):
+def expire_customer(client, name):
 	print '  Expire record %s' % name
 	# Just keep last 90 days of data
 	timesec = (datetime.now() - timedelta(90) - epoch).total_seconds()
-	ctx = []
-	if not DEBUG_FLAT:
-		#ctx.append( cdt_ctx.cdt_ctx_map_key('ts') )	# We only want to consider the contents of map value 'ts'
-		#ctx.append( cdt_ctx.cdt_ctx_map_key('100000') )	# We only want to consider the contents of map value 'ts'
-		#ctx.append( cdt_ctx.cdt_ctx_map_index(1) )	# Removes the contents of second transaction id
-
-		ctx.append( cdt_ctx.cdt_ctx_map_value(aerospike.CDTWildcard()) )	# Get map associated with transaction
-		ctx.append( cdt_ctx.cdt_ctx_map_key('ts') )	# We only want to consider the contents of map value 'ts'
 	ops = [
-		map_operations.map_remove_by_value_range('tx', 0, timesec, aerospike.MAP_RETURN_COUNT, ctx=ctx)
+		map_operations.map_remove_by_value_range('tx', [0], [timesec], aerospike.MAP_RETURN_COUNT)
 	]
 	result = client.operate(getkey(name), ops)
 	print '  %s' % str(result)
-
-
-
-
-
-#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-def expire_customer(client, name):
-	print '  Test Expire record %s' % name
-	# Just keep last 90 days of data
-	timesec = (datetime.now() - timedelta(90) - epoch).total_seconds()
-	ctx = []
-	ctx.append( cdt_ctx.cdt_ctx_map_key(aerospike.CDTWildcard()) )	# Get map associated with transaction
-	ctx.append( cdt_ctx.cdt_ctx_map_key('ts') )	# We only want to consider the contents of map value 'ts'
-
-	ops = [
-		map_operations.map_remove_by_value_range('tx', 0, timesec, aerospike.MAP_RETURN_INDEX, ctx=ctx)
-	]
-	result = client.operate(getkey(name), ops)
-	print '  %s' % str(result)
-#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-
-
 
 
 def cmd_expire(client):
@@ -162,7 +133,12 @@ def cmd_expire(client):
 def cmd_info(client):
 	print 'Show info'
 	for c in customers:
-		size = client.map_size(getkey(c.name), 'tx')
+		try:
+			size = client.map_size(getkey(c.name), 'tx')
+		except aerospike.exception.RecordNotFound as e:
+			print('  ---- Customer:%s not found (%s) ----' % (c.name, e))
+			continue
+
 		print('  ---- Customer:%s  transactions:%d ----' % (c.name, size))
 
 		# Naive iteration through map
@@ -170,14 +146,15 @@ def cmd_info(client):
 		count = 0
 		records = client.map_get_by_index_range(getkey(c.name), 'tx', 0, size, aerospike.MAP_RETURN_KEY_VALUE)
 		for (_, record) in records:
-			value = record.get('v', None)
-			if value is not None:
+			if len(record) > 1:
+				value = record[1]
 				total = total + value
 				count = count + 1
 		average = 0
 		if count > 0:
 			average = float(total) / float(count)
-		print('  Naive iteration: %d records average %f (%d items)' % (len(records), average, count))
+			print '  Key range: %d to %d' % (min(dict(records).keys()), max(dict(records).keys()))
+		print '  Naive iteration: %d records average %f (%d items)' % (len(records), average, count)
 
 		# Can we use predicates to get average???
 		#ctx = [ cdt_ctx.cdt_ctx_map_key('v') ]	# We only want to consider the contents of map value 'v'
