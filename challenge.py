@@ -14,7 +14,9 @@ import aerospike
 from aerospike import predexp as pe
 from aerospike import predicates as p
 from aerospike_helpers import cdt_ctx
+from aerospike_helpers.operations import list_operations
 from aerospike_helpers.operations import map_operations
+from aerospike_helpers.operations import operations
 
 
 parser = argparse.ArgumentParser(description='CDT challenge')
@@ -25,6 +27,7 @@ args = parser.parse_args()
 
 
 epoch = datetime.utcfromtimestamp(0)
+tid_max = 100000
 
 Customer = collections.namedtuple('Customer', ['name', 'seed'])
 customers = [
@@ -53,9 +56,9 @@ def cmd_drop(client):
 
 
 def clear_customer(client, name):
-	print '  Clear record %s', name
+	print '  Clear record %s' % name
 	ops = [
-		map_operations.map_clear('tx')
+		map_operations.map_clear('tx'),
 	]
 	client.operate(getkey(name), ops)
 
@@ -78,13 +81,13 @@ def add_customer(client, name, seed):
 
 	random.seed(seed)
 	for i in range(iterations):
-		tid = 100000 - i
+		tid = tid_max - i
 		timestamp = datetime.now() - timedelta(i)
 		timestr = str(timestamp)
 		timesec = (timestamp - epoch).total_seconds()
 		value = random.randint(1, 100)
 
-		# Without using client.operate, we could add each entry into the map separately
+		# Without using client.operate, we could add each entry into the map separately.  But that's lame.
 		#client.map_put(getkey(name), 'tx', tid, {'t':timestr, 'ts':timesec, 'v':value}, meta={'ttl': aerospike.TTL_NEVER_EXPIRE} )
 
 		if DEBUG_FLAT:
@@ -93,9 +96,10 @@ def add_customer(client, name, seed):
 			ops.append( map_operations.map_put('tx', tid, [ timesec, value, timestr ] ) )
 
 	meta = {'ttl': aerospike.TTL_NEVER_EXPIRE}
+	result = client.put(getkey(name), {"name":name}, meta=meta)
+	result = client.put(getkey(name), {"tid_max":tid_max}, meta=meta)
 	result = client.operate(getkey(name), ops, meta=meta)
 	print '  %s' % str(result)
-	result = client.put(getkey(name), {"name":name}, meta=meta)
 
 
 def cmd_load(client):
@@ -104,24 +108,47 @@ def cmd_load(client):
 		add_customer(client, c.name, c.seed)
 
 
-def modify_customer(client, name):
-	print '  Modify record %s' % name
-	ctx = [ cdt_ctx.cdt_ctx_map_key('v') ]	# We only want to consider the contents of map value 'v'
+def modify_customer(client, name, tid):
+	print '  Modify record %s %s' % (name, tid)
+	meta = {'ttl': aerospike.TTL_NEVER_EXPIRE}  # Otherwise default TTL applies!
+
+	ctx = [
+		cdt_ctx.cdt_ctx_map_key(tid),  # Using aerospike.CDTWildcard() will only match the first key, not all the keys.
+	]
+
+	ops = [
+		# The value we want to increment is in a list, so we use a list_operation.  The top level being a map is dealt with using ctx.
+		list_operations.list_increment('tx', 1, 100, ctx=ctx),
+	]
+	result = client.operate(getkey(name), ops, meta=meta)
+	print '  %s' % str(result)
 
 
 def cmd_modify(client):
 	print 'Modify records'
-	modify_customer(client, customers[0].name)
+	modify_customer(client, customers[0].name, tid_max)
 
 
 def expire_customer(client, name):
 	print '  Expire record %s' % name
-	# Just keep last 90 days of data
+	meta = {'ttl': aerospike.TTL_NEVER_EXPIRE}  # Otherwise default TTL applies!
+
+	ops = [
+		operations.increment('tid_max', 1),
+		operations.read('tid_max'),
+	]
+	_, _, result = client.operate(getkey(name), ops, meta=meta)
+	tid = result.get('tid_max', None)
+	print '  New tid=%s' % tid
+
+	# Only keep last 90 days of data
+	now = (datetime.now() - epoch).total_seconds()
 	timesec = (datetime.now() - timedelta(90) - epoch).total_seconds()
 	ops = [
-		map_operations.map_remove_by_value_range('tx', [0], [timesec], aerospike.MAP_RETURN_COUNT)
+		map_operations.map_put('tx', tid, [ now, -1 ] ),
+		map_operations.map_remove_by_value_range('tx', [0], [timesec], aerospike.MAP_RETURN_COUNT),
 	]
-	result = client.operate(getkey(name), ops)
+	result = client.operate(getkey(name), ops, meta=meta)
 	print '  %s' % str(result)
 
 
@@ -150,14 +177,14 @@ def cmd_info(client):
 				value = record[1]
 				total = total + value
 				count = count + 1
-		average = 0
+		average = float('nan')
 		if count > 0:
 			average = float(total) / float(count)
 			print '  Key range: %d to %d' % (min(dict(records).keys()), max(dict(records).keys()))
 		print '  Naive iteration: %d records average %f (%d items)' % (len(records), average, count)
 
 		# Can we use predicates to get average???
-		#ctx = [ cdt_ctx.cdt_ctx_map_key('v') ]	# We only want to consider the contents of map value 'v'
+		#ctx = [ cdt_ctx.cdt_ctx_list_index(1) ]	# We only want to consider the contents of map value 'v'
 		#query = client.query('ns1', 'set1')
 		#query.select('tx')
 
